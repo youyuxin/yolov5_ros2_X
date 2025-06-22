@@ -1,6 +1,6 @@
-from math import frexp
-from traceback import print_tb
-from torch import imag
+#from math import frexp
+#from traceback import print_tb
+#from torch import imag
 from yolov5 import YOLOv5
 import rclpy
 from rclpy.node import Node
@@ -16,6 +16,12 @@ import os
 
 # Get the ROS distribution version and set the shared directory for YoloV5 configuration files.
 ros_distribution = os.environ.get("ROS_DISTRO")
+#调用 ROS 2 的 ament_index_python 包中的 get_package_share_directory 函数，
+# 查找并返回名为 yolov5_ros2 这个 ROS 2 包的 share 目录的绝对路径
+# 这个路径通常用于读取包内的配置文件、模型文件等资源
+
+#home/xin/ros2_ws/install/yolov5_ros2/share/yolov5_ros2，
+#那么 package_share_directory 的值就是
 package_share_directory = get_package_share_directory('yolov5_ros2')
 
 # Create a ROS 2 Node class YoloV5Ros2.
@@ -24,7 +30,7 @@ class YoloV5Ros2(Node):
         super().__init__('yolov5_ros2')
         self.get_logger().info(f"Current ROS 2 distribution: {ros_distribution}")
 
-        # Declare ROS parameters.
+        # Declare ROS parameters. 声明 ROS 参数。
         self.declare_parameter("device", "cuda", ParameterDescriptor(
             name="device", description="Compute device selection, default: cpu, options: cuda:0"))
 
@@ -49,23 +55,28 @@ class YoloV5Ros2(Node):
         self.declare_parameter("pub_result_img", False, ParameterDescriptor(
             name="pub_result_img", description="Whether to publish detection result images, default: False"))
 
-        # 1. Load the model.
+        # 1. Load the model. 加载yolov5s.pt模型。
         model_path = package_share_directory + "/config/" + self.get_parameter('model').value + ".pt"
         device = self.get_parameter('device').value
         self.yolov5 = YOLOv5(model_path=model_path, device=device)
 
         # 2. Create publishers.
+        #发布检测结果的消息。
+        #创建一个发布器，发布检测结果的消息。
         self.yolo_result_pub = self.create_publisher(
             Detection2DArray, "yolo_result", 10)
+        #创建一个 Detection2DArray 消息对象，用于存储检测结果
         self.result_msg = Detection2DArray()
-
+        
+        #发布检测后的图像
         self.result_img_pub = self.create_publisher(Image, "result_img", 10)
 
         # 3. Create an image subscriber (subscribe to depth information for 3D cameras, load camera info for 2D cameras).
+        #订阅相机的图像话题。
         image_topic = self.get_parameter('image_topic').value
         self.image_sub = self.create_subscription(
             Image, image_topic, self.image_callback, 10)
-
+        #相机信息话题
         camera_info_topic = self.get_parameter('camera_info_topic').value
         self.camera_info_sub = self.create_subscription(
             CameraInfo, camera_info_topic, self.camera_info_callback, 1)
@@ -90,7 +101,7 @@ class YoloV5Ros2(Node):
         self.camera_info['d'] = msg.d
         self.camera_info['r'] = msg.r
         self.camera_info['roi'] = msg.roi
-
+        #获取相机信息后，销毁订阅器。
         self.camera_info_sub.destroy()
 
     def image_callback(self, msg: Image):
@@ -99,21 +110,25 @@ class YoloV5Ros2(Node):
         detect_result = self.yolov5.predict(image)
         self.get_logger().info(str(detect_result))
 
+        #先清空result_msg中的检测结果。
         self.result_msg.detections.clear()
         self.result_msg.header.frame_id = "camera"
         self.result_msg.header.stamp = self.get_clock().now().to_msg()
 
         # Parse the results.
-        predictions = detect_result.pred[0]
+        predictions = detect_result.pred[0]#获取可信度最佳的预测结果
+        #在 YOLOv5 的输出中，通常每一行的格式为 [x1, y1, x2, y2, conf, cls]，
+        #所以 predictions[:, :4] 得到的就是所有检测框的 [x1, y1, x2, y2] 坐标（像素值）
         boxes = predictions[:, :4]  # x1, y1, x2, y2
-        scores = predictions[:, 4]
-        categories = predictions[:, 5]
-
+        scores = predictions[:, 4] #conf
+        categories = predictions[:, 5] # cls 可以识别多个种类
+        self.get_logger().info(f"categories: {categories} \n categories lenth:{len(categories)}")
         for index in range(len(categories)):
             name = detect_result.names[int(categories[index])]
             detection2d = Detection2D()
             detection2d.id = name
-            x1, y1, x2, y2 = boxes[index]
+            x1, y1, x2, y2= boxes[index]
+
             x1 = int(x1)
             y1 = int(y1)
             x2 = int(x2)
@@ -131,7 +146,7 @@ class YoloV5Ros2(Node):
             detection2d.bbox.size_x = float(x2-x1)
             detection2d.bbox.size_y = float(y2-y1)
 
-            obj_pose = ObjectHypothesisWithPose()
+            obj_pose = ObjectHypothesisWithPose()#姿态物体识别假设With位置
             obj_pose.hypothesis.class_id = name
             obj_pose.hypothesis.score = float(scores[index])
 
@@ -140,8 +155,11 @@ class YoloV5Ros2(Node):
                 [center_x, center_y], self.camera_info["k"], self.camera_info["d"], 1)
             obj_pose.pose.pose.position.x = world_x
             obj_pose.pose.pose.position.y = world_y
-            detection2d.results.append(obj_pose)
+            detection2d.results.append(obj_pose)#因为detection2d.results结构是一个数组,所以需要用append方法添加元素。
+            self.get_logger().info(f"detection2d.results lenth: {len(detection2d.results)} \n")
             self.result_msg.detections.append(detection2d)
+            self.get_logger().info(f"self.result_msg.detections lenth: {len(self.result_msg.detections)} \n")
+            
 
             # Draw results.
             if self.show_result or self.pub_result_img:

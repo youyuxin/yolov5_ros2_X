@@ -28,7 +28,7 @@ def px2xy(point, camera_k, camera_d, z=1.0):
     
     # 使用OpenCV的cv2.undistortPoints函数对输入点进行畸变矫正，并乘以深度值z
     # Use OpenCV's cv2.undistortPoints function to correct distortion of input points and multiply by depth value z
-    pts_uv = cv2.undistortPoints(point, MK, MD) * z
+    pts_uv = cv2.undistortPoints(point, MK, MD) * z #转换为相机坐标系下的归一化坐标？？
     
     # 返回相机坐标系下的二维坐标
     # Return 2D coordinates in the camera coordinate system
